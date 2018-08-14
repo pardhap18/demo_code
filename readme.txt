@@ -4,4 +4,6 @@
 
 2) Along with terraform code for infrastructure set up, I used ansible for configuration of jenkins server in ec2 instance.
 
-3) In the same way as above, created tomcat webserver using terraform and ansible in another ec2 instance.  
+3) In the same way as above, created tomcat webserver using terraform and ansible in another ec2 instance.
+
+4) Use jenkins pipeline for CI/CD to tomcat webserver.  

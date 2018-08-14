@@ -1,0 +1,105 @@
+#!/usr/bin/env groovy
+
+def pomVersion() {
+    def matcher = readFile('pom.xml') =~ '<version>(.+)</version>'
+    matcher ? matcher[0][1] : null
+}
+
+def mavenOptionSSL = '-Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true'
+def mavenOptions = mavenOptionSSL
+
+def isReleaseBranch() {
+    BRANCH_NAME.toLowerCase().startsWith("release/")
+}
+
+def isFeatureBranch() {
+    BRANCH_NAME.toLowerCase().startsWith("feature/")
+}
+
+def isHotfixBranch() {
+    BRANCH_NAME.toLowerCase().startsWith("hotfix/")
+}
+
+def isMasterBranch() {
+    BRANCH_NAME.toLowerCase().startsWith("master") || BRANCH_NAME.toLowerCase().startsWith("devel")
+}
+
+def isReleaseUptoDate() {
+    originMaster = sh "git rev-parse origin/master"
+    originRealease = sh "git rev-parse origin/$BRANCH_NAME"
+
+    return originMaster == originRealease
+}
+
+node {
+    stage('Clean workspace') {
+        deleteDir()
+    }
+
+    stage('Checkout') {
+        checkout scm
+        gitCommit = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+        shortCommit = gitCommit.take(6)
+        echo "Running with shortCommit => $shortCommit"
+        echo "Running with stage => $STAGE_EXECUTE"
+        echo STAGE_EXECUTE
+    }
+
+    if (STAGE_EXECUTE.toLowerCase().startsWith("test")) {
+        if (isFeatureBranch() || isHotfixBranch()) {
+            stage('Test') {
+                sh 'mvn clean test ' + mavenOptions
+            }
+        }
+
+        if (isReleaseBranch()) {
+            stage('Test, Scoverage & Sonar') {
+                sh "mvn scoverage:check scoverage:report-only sonar:sonar -Dsonar.projectVersion=\"$currentBuild.displayName\" " + mavenOptions
+            }
+        }
+    }
+
+    if (STAGE_EXECUTE.toLowerCase().startsWith("deploy")) {
+        echo "deploying..."
+        if (isMasterBranch()) {
+            stage('Deploy') {
+                sh 'mvn deploy ' + mavenOptions
+            }
+        } else {
+            echo "Operation not allowed"
+        }
+    }
+
+    if (STAGE_EXECUTE.toLowerCase().startsWith("prepare release")) {
+        echo "preparing release..."
+
+        if (isReleaseBranch() ||isMasterBranch() ) {
+            stage('Prepare release') {
+
+                if (!isReleaseUptoDate()) {
+                    error('Your release should be up to date with master!')
+                }
+
+                //stage("Test, Scoverage & Sonar") {
+                //    sh "mvn scoverage:check scoverage:report-only sonar:sonar -Dsonar.projectVersion=\"$release\" " + mavenOptions
+                //}
+
+                sh "git checkout -b $BRANCH_NAME origin/$BRANCH_NAME"
+                sh "mvn -B -Darguments=\"-DskipTests\" release:prepare   " + mavenOptions
+            }
+
+        }
+        if (STAGE_EXECUTE.toLowerCase().startsWith("perform release")) {
+            if (isReleaseBranch()) {
+                stage("Perform Release") {
+                    sh 'mvn -Darguments=\"-DskipTests\" release:perform ' + mavenOptions
+                    sh 'git checkout -b master origin/master'
+                    sh "git merge $BRANCH_NAME"
+                    sh 'git push origin master'
+                    sh "git push origin --delete $BRANCH_NAME"
+                }
+            }
+        }
+    }
+}
+
